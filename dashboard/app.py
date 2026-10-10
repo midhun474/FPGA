@@ -30,7 +30,8 @@ from dashboard.config import (
     SENSOR_CONFIG,
     evaluate_engineering_limits,
     determine_final_health,
-    LimitSeverity
+    LimitSeverity,
+    calibrate_history_dataframe
 )
 from dashboard.styles import get_custom_css
 from dashboard.data_source import (
@@ -105,6 +106,12 @@ def load_ml_pipeline():
         return None, None, f"Failed to deserialize model: {str(e)}"
 
 
+@st.cache_resource(show_spinner=False)
+def get_shared_uart_source(port: str) -> LiveUARTDataSource:
+    """Provides a singleton LiveUARTDataSource shared across tabs and reruns to prevent COM port lockouts."""
+    return LiveUARTDataSource(port=port)
+
+
 # =============================================================================
 # Session State Initialization
 # =============================================================================
@@ -133,7 +140,7 @@ if "mock_source" not in st.session_state:
         st.session_state.mock_source = None
 if "uart_source" not in st.session_state:
     initial_port = detected_fpga_port or "COM10"
-    st.session_state.uart_source = LiveUARTDataSource(port=initial_port)
+    st.session_state.uart_source = get_shared_uart_source(initial_port)
 
 # If in Physical UART mode and port is closed, attempt auto-connect (unless user explicitly disconnected)
 if st.session_state.data_mode == "Physical UART Stream (Artix-7)":
@@ -628,6 +635,9 @@ try:
                         st.session_state.data_mode = "Dynamic Simulation Stream"
                         st.rerun()
 
+            if rcv.is_port_open and st.session_state.get("auto_refresh", True):
+                time.sleep(1)
+                st.rerun()
             st.stop()
 
 except Exception as e:
@@ -639,7 +649,24 @@ except Exception as e:
 # =============================================================================
 # ML Inference & Health Classification
 # =============================================================================
+# ML Inference & Health Classification
+# =============================================================================
 try:
+    # 0. Pre-evaluate Centralized Engineering Limits & Regional Summary
+    prov_map = meta.get("provenance", {})
+    reg_baselines = meta.get("regional_baselines") or meta.get("baseline", {})
+    eng_assessment = evaluate_engineering_limits(
+        latest.to_dict(),
+        provenance_map=prov_map,
+        regional_baselines=reg_baselines
+    )
+
+    # Calibrate history_df timing series across the entire window with Multi-Pblock Quorum & Weights
+    history_df = calibrate_history_dataframe(history_df, weights=eng_assessment.regional_weights)
+    latest = history_df.iloc[-1].copy()
+    curr_ro_freq = float(latest["RO_Frequency"])
+    curr_ro_delay = float(latest["RO_Delay_ns"])
+
     missing_feats = [f for f in model_features if f not in history_df.columns]
     if missing_feats:
         st.error(f"Missing required engineered features: {missing_feats}")
@@ -657,14 +684,6 @@ try:
     latest_probs = probs[-1]
     prob_dict = {cls: float(latest_probs[i]) for i, cls in enumerate(classes)}
 
-    # Evaluate Centralized Engineering & Physical Operating Limits
-    prov_map = meta.get("provenance", {})
-    reg_baselines = meta.get("regional_baselines") or meta.get("baseline", {})
-    eng_assessment = evaluate_engineering_limits(
-        latest.to_dict(),
-        provenance_map=prov_map,
-        regional_baselines=reg_baselines
-    )
     final_health_dict = determine_final_health(ml_pred, ml_conf, eng_assessment)
 
     latest_pred = final_health_dict["final_health"]
@@ -678,11 +697,9 @@ except Exception as e:
 
 # Baseline and shift metrics
 baseline = meta.get("baseline", {})
-curr_ro_freq = float(latest["RO_Frequency"])
 base_ro_freq = float(baseline.get("RO_Frequency", 436.0))
 ro_freq_shift = ((curr_ro_freq - base_ro_freq) / base_ro_freq) * 100.0
 
-curr_ro_delay = float(latest["RO_Delay_ns"])
 base_ro_delay = float(baseline.get("RO_Delay_ns", 0.2294))
 ro_delay_shift = ((curr_ro_delay - base_ro_delay) / base_ro_delay) * 100.0
 
@@ -795,9 +812,13 @@ render_primary_health_kpis(
 )
 
 # 3. FPGA MEASUREMENTS
+latest_top = latest.copy()
+latest_top["RO_Frequency"] = curr_ro_freq
+latest_top["RO_Delay_ns"] = curr_ro_delay
+
 st.html('<div class="section-header">📊 FPGA Measurements <span class="tag">XADC & LOGIC TELEMETRY</span></div>')
 render_measurements_grid(
-    latest=latest,
+    latest=latest_top,
     baseline=baseline,
     sample_num=meta.get("current_index", len(history_df))
 )
@@ -805,12 +826,28 @@ render_measurements_grid(
 # 4. RING OSCILLATOR MONITORING
 st.html('<div class="section-header">⏱️ Ring Oscillator Aging Indicator <span class="tag">TIMING DEGRADATION</span></div>')
 render_ring_oscillator_section(
-    latest=latest,
+    latest=latest_top,
     baseline=baseline
 )
 
 # 5. FPGA HEALTH TRENDS (Dedicated Independent Graphs)
 st.html('<div class="section-header">📈 FPGA Health Trends <span class="tag">INDEPENDENT SENSOR DYNAMICS</span></div>')
+
+col_scale1, col_scale2, col_scale3 = st.columns([2.5, 1.2, 1.3])
+with col_scale1:
+    st.caption("🔍 **Adaptive Dynamic Scaling**: Magnifies micro-fluctuations & sensor jitter for high-detail inspection; auto-widens for major excursions.")
+with col_scale2:
+    adaptive_zoom = st.toggle("Adaptive Zoom", value=True, help="Automatically magnifies small fluctuations when enabled.")
+with col_scale3:
+    zoom_choice = st.select_slider(
+        "Zoom Level",
+        options=["Standard (1x)", "High (3x)", "Ultra Zoom (10x)"],
+        value="Ultra Zoom (10x)",
+        disabled=not adaptive_zoom,
+        help="Higher zoom narrows headroom to focus strictly on tiny variations with maximum vertical detail."
+    )
+    zoom_map = {"Standard (1x)": 1.0, "High (3x)": 3.0, "Ultra Zoom (10x)": 10.0}
+    active_zoom_factor = zoom_map.get(zoom_choice, 5.0)
 
 trend_tab1, trend_tab2, trend_tab3, trend_tab4, trend_tab5 = st.tabs([
     "⏱️ RO Frequency & Timing Delay",
@@ -823,31 +860,31 @@ trend_tab1, trend_tab2, trend_tab3, trend_tab4, trend_tab5 = st.tabs([
 with trend_tab1:
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        st.caption("**Ring Oscillator Frequency Trend (MHz)** (Cyan line: measurement, Blue dashed: baseline)")
-        st.altair_chart(create_ro_frequency_chart(history_df, baseline_freq=base_ro_freq), width="stretch")
+        st.caption("**Ring Oscillator Frequency Trend (MHz)** (Cyan line: Calibrated Overall Frequency, Blue dashed: Baseline 436.0 MHz, Orange/Red dashed: Warning/Critical limits)")
+        st.altair_chart(create_ro_frequency_chart(history_df, baseline_freq=base_ro_freq, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
     with col_g2:
-        st.caption("**Ring Oscillator Delay Trend (Derived RO Stage Delay in ns)** (Magenta line: measurement, Purple dashed: baseline)")
-        st.altair_chart(create_ro_delay_chart(history_df, baseline_delay=base_ro_delay), width="stretch")
+        st.caption("**Ring Oscillator Delay Trend (Derived RO Stage Delay in ns)** (Magenta line: Calibrated Derived Delay, Purple dashed: Baseline 0.2294 ns, Orange/Red dashed: Warning/Critical limits)")
+        st.altair_chart(create_ro_delay_chart(history_df, baseline_delay=base_ro_delay, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab2:
     st.caption("**FPGA Die Temperature Trend (°C)** (Red line: measurement, Green dashed: baseline 35°C, Orange dashed: 50°C warning)")
-    st.altair_chart(create_temperature_chart(history_df, baseline_temp=base_temp), width="stretch")
+    st.altair_chart(create_temperature_chart(history_df, baseline_temp=base_temp, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab3:
     col_v1, col_v2, col_v3 = st.columns(3)
     with col_v1:
         st.caption("**VCCINT (1.000V Core Rail)**")
-        st.altair_chart(create_voltage_chart(history_df, "VCCINT", 1.000), width="stretch")
+        st.altair_chart(create_voltage_chart(history_df, "VCCINT", 1.000, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
     with col_v2:
         st.caption("**VCCAUX (1.800V Auxiliary Rail)**")
-        st.altair_chart(create_voltage_chart(history_df, "VCCAUX", 1.800), width="stretch")
+        st.altair_chart(create_voltage_chart(history_df, "VCCAUX", 1.800, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
     with col_v3:
         st.caption("**VCCBRAM (1.000V BRAM Rail)**")
-        st.altair_chart(create_voltage_chart(history_df, "VCCBRAM", 1.000), width="stretch")
+        st.altair_chart(create_voltage_chart(history_df, "VCCBRAM", 1.000, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab4:
     st.caption("**Functional Error Rate Trend** (Amber area: soft error probability)")
-    st.altair_chart(create_error_rate_chart(history_df), width="stretch")
+    st.altair_chart(create_error_rate_chart(history_df, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab5:
     col_s1, col_s2 = st.columns(2)
@@ -945,7 +982,11 @@ four_regions = generate_four_region_data(
     latest.to_dict(),
     meta.get("regional_baselines") or meta.get("baseline", {})
 )
-st.html(render_four_region_map_html(four_regions, composite_risk))
+st.html(render_four_region_map_html(
+    four_regions,
+    composite_risk,
+    weighted_summary=getattr(eng_assessment, "weighted_summary", None)
+))
 
 
 # 10. AI AGENT RECOMMENDATIONS (LangGraph)

@@ -188,13 +188,13 @@ class LiveSimulationDataSource:
             "VCCBRAM": 1.000,
             "RO_Frequency": 436.0,
             "RO_Delay_ns": 0.2294,
-            "RO_R1": 436.3,
-            "RO_R1_Delay_ns": 0.2292,
-            "RO_R2": 435.8,
-            "RO_R2_Delay_ns": 0.2295,
-            "RO_R3": 436.1,
-            "RO_R3_Delay_ns": 0.2293,
-            "RO_R4": 435.9,
+            "RO_R1": 436.0,
+            "RO_R1_Delay_ns": 0.2294,
+            "RO_R2": 436.0,
+            "RO_R2_Delay_ns": 0.2294,
+            "RO_R3": 436.0,
+            "RO_R3_Delay_ns": 0.2294,
+            "RO_R4": 436.0,
             "RO_R4_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
@@ -320,6 +320,9 @@ class LiveUARTDataSource:
         self.receiver.disconnect()
 
     def poll_hardware(self) -> Optional[Dict[str, Any]]:
+        # Allow initial packet capture on fresh connection if buffer is currently empty
+        if not self.buffer and self.receiver.is_port_open:
+            time.sleep(0.15)
         last_packet = None
         while True:
             packet = self.receiver.read_packet()
@@ -377,13 +380,13 @@ class LiveUARTDataSource:
                             "VCCBRAM": 1.000,
                             "RO_Frequency": 436.0,
                             "RO_Delay_ns": 0.2294,
-                            "RO_R1": 436.3,
-                            "RO_R1_Delay_ns": 0.2292,
-                            "RO_R2": 435.8,
-                            "RO_R2_Delay_ns": 0.2295,
-                            "RO_R3": 436.1,
-                            "RO_R3_Delay_ns": 0.2293,
-                            "RO_R4": 435.9,
+                            "RO_R1": 436.0,
+                            "RO_R1_Delay_ns": 0.2294,
+                            "RO_R2": 436.0,
+                            "RO_R2_Delay_ns": 0.2294,
+                            "RO_R3": 436.0,
+                            "RO_R3_Delay_ns": 0.2294,
+                            "RO_R4": 436.0,
                             "RO_R4_Delay_ns": 0.2294,
                             "Error_Rate": 0.000010
                         }
@@ -401,13 +404,13 @@ class LiveUARTDataSource:
                 "VCCBRAM": 1.000,
                 "RO_Frequency": 436.0,
                 "RO_Delay_ns": 0.2294,
-                "RO_R1": 436.3,
-                "RO_R1_Delay_ns": 0.2292,
-                "RO_R2": 435.8,
-                "RO_R2_Delay_ns": 0.2295,
-                "RO_R3": 436.1,
-                "RO_R3_Delay_ns": 0.2293,
-                "RO_R4": 435.9,
+                "RO_R1": 436.0,
+                "RO_R1_Delay_ns": 0.2294,
+                "RO_R2": 436.0,
+                "RO_R2_Delay_ns": 0.2294,
+                "RO_R3": 436.0,
+                "RO_R3_Delay_ns": 0.2294,
+                "RO_R4": 436.0,
                 "RO_R4_Delay_ns": 0.2294,
                 "Error_Rate": 0.000010
             }]
@@ -477,13 +480,13 @@ class LiveUARTDataSource:
                 "VCCBRAM": 1.000,
                 "RO_Frequency": 436.0,
                 "RO_Delay_ns": 0.2294,
-                "RO_R1": 436.3,
-                "RO_R1_Delay_ns": 0.2292,
-                "RO_R2": 435.8,
-                "RO_R2_Delay_ns": 0.2295,
-                "RO_R3": 436.1,
-                "RO_R3_Delay_ns": 0.2293,
-                "RO_R4": 435.9,
+                "RO_R1": 436.0,
+                "RO_R1_Delay_ns": 0.2294,
+                "RO_R2": 436.0,
+                "RO_R2_Delay_ns": 0.2294,
+                "RO_R3": 436.0,
+                "RO_R3_Delay_ns": 0.2294,
+                "RO_R4": 436.0,
                 "RO_R4_Delay_ns": 0.2294,
                 "Error_Rate": 0.000010
             }
@@ -509,13 +512,13 @@ class EstimatedDataSource:
         "VCCBRAM": 1.000,
         "RO_Frequency": 436.0,
         "RO_Delay_ns": 0.2294,
-        "RO_R1": 436.3,
-        "RO_R1_Delay_ns": 0.2292,
-        "RO_R2": 435.8,
-        "RO_R2_Delay_ns": 0.2295,
-        "RO_R3": 436.1,
-        "RO_R3_Delay_ns": 0.2293,
-        "RO_R4": 435.9,
+        "RO_R1": 436.0,
+        "RO_R1_Delay_ns": 0.2294,
+        "RO_R2": 436.0,
+        "RO_R2_Delay_ns": 0.2294,
+        "RO_R3": 436.0,
+        "RO_R3_Delay_ns": 0.2294,
+        "RO_R4": 436.0,
         "RO_R4_Delay_ns": 0.2294,
         "Error_Rate": 0.00001
     }
